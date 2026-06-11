@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 import os
 import shutil
 import mimetypes
+import time
 
 
 
@@ -36,7 +37,7 @@ import mimetypes
 INTERNAL_API = os.getenv('INTERNAL_API', 'no')
 
 # Default model for public embedding
-EMBEDDINGS_MODEL = 'nvidia/nv-embedqa-e5-v5'
+EMBEDDINGS_MODEL = 'nvidia/llama-nemotron-embed-1b-v2'
 
 # Set the chunk size and overlap for the text splitter. Uses defaults but allows them to be set as environment variables.
 DEFAULT_CHUNK_SIZE = 250
@@ -48,7 +49,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", DEFAULT_CHUNK_OVERLAP))
 
 if INTERNAL_API == 'yes':
     # NVIDIA employees can use internal endpoints
-    EMBEDDINGS_MODEL = 'nvdev/nvidia/nv-embedqa-e5-v5'
+    EMBEDDINGS_MODEL = 'nvdev/nvidia/llama-nemotron-embed-1b-v2'
     print("[config] INTERNAL_API detected.")
     print(f"[config] Using internal embedding model: {EMBEDDINGS_MODEL}")
 
@@ -93,44 +94,46 @@ def safe_load(url):
     try:
         return WebBaseLoader(url).load()
     except Exception as e:
-        print(f"[upload] Skipping {url}: {e}")
+        print(f"[Documents] ⚠ Could not load {url}: {e}")
         return None
 
 
 def upload(urls: List[str]):
     """ This is a helper function for parsing the user inputted URLs and uploading them into the vector store. """
 
+    urls = [url.strip() for url in urls if url.strip()]
+    for url in urls:
+        if not is_valid_url(url):
+            print(f"[Documents] ⚠ Skipping invalid URL: {url}")
     urls = [url for url in urls if is_valid_url(url)]
 
+    if not urls:
+        print("[Documents] ✗ No valid URLs provided — nothing was added to the context.")
+        return None
+
+    print(f"[Documents] Adding {len(urls)} webpage(s) to the context...")
     docs = []
     for url in urls:
         result = safe_load(url)
         if result is not None:
             docs.append(result)
+            print(f"[Documents] ✓ Loaded {url}")
 
     docs_list = [item for sublist in docs for item in sublist]
 
     if not docs_list:
         # If no documents were loaded, return None
-        print("[upload] No URLs provided.")
+        print("[Documents] ✗ None of the webpages could be loaded — nothing was added to the context.")
         return None
-    
-    try:
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            chunk_size=CHUNK_SIZE, chunk_overlap=0
-        )
-        doc_splits = text_splitter.split_documents(docs_list)
 
-        vectorstore = Chroma.from_documents(
-            documents=doc_splits,
-            collection_name="rag-chroma",
-            embedding=NVIDIAEmbeddings(model=EMBEDDINGS_MODEL),
-            persist_directory="/project/data",
-        )
-        return vectorstore
+    print(f"[Documents] Loaded {len(docs)} of {len(urls)} webpage(s) successfully")
+
+    try:
+        doc_splits = split_documents(docs_list)
+        return embed_documents(doc_splits)
 
     except Exception as e:
-        print(f"[upload] Vectorstore creation failed: {e}")
+        print(f"[Documents] ✗ Failed to add webpages to the context: {e}")
         return None
 
 
@@ -153,32 +156,36 @@ def load_documents_from_files(file_paths: List[str]) -> List[Any]:
         }.get(ext)
 
         if loader_cls is None:
-            print(f"[load_documents] Skipping unsupported file type: {fpath}")
+            print(f"[Documents] ⚠ Skipping unsupported file type: {os.path.basename(fpath)} (supported: .pdf, .txt, .md, .csv)")
             continue
 
         try:
             loaded = loader_cls(fpath).load()
             docs.append(loaded)
+            print(f"[Documents] ✓ Loaded {os.path.basename(fpath)}")
         except Exception as e:
-            print(f"[load_documents] Failed to load {fpath}: {e}")
+            print(f"[Documents] ✗ Failed to load {os.path.basename(fpath)}: {e}")
 
     return [item for sublist in docs for item in sublist]
 
 
 def split_documents(docs: List[Any]):
     """Split documents into smaller chunks using recursive splitter."""
-    print(f"[split_documents] Splitting {len(docs)} docs with chunk size {CHUNK_SIZE}, overlap {CHUNK_OVERLAP}")
+    print(f"[Documents] Splitting {len(docs)} document(s) into chunks of ~{CHUNK_SIZE} tokens ({CHUNK_OVERLAP} token overlap)...")
 
     splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP
     )
-    return splitter.split_documents(docs)
+    doc_splits = splitter.split_documents(docs)
+    print(f"[Documents] Created {len(doc_splits)} chunks")
+    return doc_splits
 
 def embed_documents(doc_splits: List[Any]):
     """Embed and store the split documents into Chroma vectorstore."""
     try:
-        print(f"[embed_documents] Embedding {len(doc_splits)} chunks using model: {EMBEDDINGS_MODEL}")
+        print(f"[Documents] Embedding {len(doc_splits)} chunks with {EMBEDDINGS_MODEL}...")
+        start = time.time()
 
         vectorstore = Chroma.from_documents(
             documents=doc_splits,
@@ -186,10 +193,11 @@ def embed_documents(doc_splits: List[Any]):
             embedding=NVIDIAEmbeddings(model=EMBEDDINGS_MODEL),
             persist_directory="/project/data",
         )
+        print(f"[Documents] ✓ Context ready — {len(doc_splits)} chunks stored in the vector database ({time.time() - start:.1f}s)")
         return vectorstore
 
     except Exception as e:
-        print(f"[embed_documents] Vectorstore creation failed: {e}")
+        print(f"[Documents] ✗ Embedding failed — could not build the context: {e}")
         return None
 
 
@@ -199,21 +207,23 @@ def upload_files(file_paths: List[str]):
     """Upload files into the vector store pipeline."""
 
     if not file_paths:
-        print("[upload_files] No documents provided.")
+        print("[Documents] ✗ No files provided — nothing was added to the context.")
         return None
+
+    print(f"[Documents] Adding {len(file_paths)} file(s) to the context...")
 
     try:
         docs_list = load_documents_from_files(file_paths)
 
         if not docs_list:
-            print("[upload_files] No documents successfully loaded.")
+            print("[Documents] ✗ None of the files could be loaded — nothing was added to the context.")
             return None
 
         doc_splits = split_documents(docs_list)
         return embed_documents(doc_splits)
 
     except Exception as e:
-        print(f"[upload_files] Pipeline failed: {e}")
+        print(f"[Documents] ✗ Failed to add files to the context: {e}")
         return None
 
 
@@ -226,6 +236,8 @@ def _clear(
 ):
     """Clear the Chroma collection and optionally delete all shard folders (excluding hidden files)."""
     try:
+        print("[Documents] Clearing the context...")
+
         # Clear the collection via Chroma client
         vectorstore = Chroma(
             collection_name=collection_name,
@@ -234,9 +246,9 @@ def _clear(
         )
         vectorstore._client.delete_collection(name=collection_name)
         vectorstore._client.create_collection(name=collection_name)
-        print(f"[clear] Collection '{collection_name}' cleared.")
 
         if delete_all:
+            removed = 0
             for item in os.listdir(persist_directory):
                 if item.startswith(".") or item.startswith("chroma.") or item.startswith("readme-images"):
                     continue  # Skip hidden files like .gitkeep and the sqlite3 file
@@ -245,15 +257,19 @@ def _clear(
                 try:
                     if os.path.isfile(path):
                         os.remove(path)
-                        print(f"[clear] Removed file: {item}")
+                        removed += 1
                     elif os.path.isdir(path):
                         shutil.rmtree(path)
-                        print(f"[clear] Removed directory: {item}")
+                        removed += 1
                 except Exception as file_err:
-                    print(f"[clear] Could not delete {item}: {file_err}")
+                    print(f"[Documents] ⚠ Could not delete cached index data '{item}': {file_err}")
+            if removed:
+                print(f"[Documents] Removed {removed} cached index item(s) from disk")
+
+        print("[Documents] ✓ Context cleared — the vector database is now empty")
 
     except Exception as e:
-        print(f"[clear] Failed to clear vector store: {e}")
+        print(f"[Documents] ✗ Failed to clear the context: {e}")
 
 
       

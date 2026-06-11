@@ -35,6 +35,12 @@ class TavilyAPIError(Exception):
     pass
 
 
+# Nemotron 3 API models generate a reasoning ("thinking") trace by default. Every
+# component in this workflow expects a direct completion -- the graders parse bare
+# JSON from the response -- so thinking is disabled on each hosted-endpoint call.
+NEMOTRON_NO_THINK = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 
 ### State
 
@@ -97,6 +103,15 @@ class GraphState(TypedDict):
 
 from langchain.schema import Document
 
+
+def _model_desc(state, component):
+    """Human-readable description of the endpoint serving a component, for the Actions Console."""
+    if state[f"{component}_use_nim"]:
+        model_name = state[f"nim_{component}_id"] or "meta/llama-3.1-8b-instruct"
+        return f"{model_name} (self-hosted endpoint)"
+    return f"{state[f'{component}_model_id']} (NVIDIA API endpoint)"
+
+
 ### Nodes
 
 
@@ -110,12 +125,13 @@ def retrieve(state):
     Returns:
         state (dict): New key added to state, documents, that contains retrieved documents
     """
-    print("---RETRIEVE---")
+    print("[Retriever] Searching the vector database for relevant chunks...")
     question = state["question"]
 
     # Retrieval
     retriever = database.get_retriever()
     documents = retriever.invoke(question)
+    print(f"[Retriever] Retrieved {len(documents)} chunk(s) from the vector database")
     return {"documents": documents, "question": question}
 
 
@@ -129,9 +145,9 @@ def generate(state):
     Returns:
         state (dict): New key added to state, generation, that contains LLM generation
     """
-    print("---GENERATE---")
     question = state["question"]
     documents = state["documents"]
+    print(f"[Generator] Generating an answer from {len(documents)} context document(s) using {_model_desc(state, 'generator')}...")
 
     # RAG generation
     prompt = PromptTemplate(
@@ -143,9 +159,10 @@ def generate(state):
                                model_name=state["nim_generator_id"] if len(state["nim_generator_id"]) > 0 else "meta/llama-3.1-8b-instruct",
                                gpu_type=state["nim_generator_gpu_type"] if "nim_generator_gpu_type" in state else None,
                                gpu_count=state["nim_generator_gpu_count"] if "nim_generator_gpu_count" in state else None,
-                               temperature=0.7) if state["generator_use_nim"] else ChatNVIDIA(model=state["generator_model_id"], temperature=0.7)
+                               temperature=0.7) if state["generator_use_nim"] else ChatNVIDIA(model=state["generator_model_id"], temperature=0.7).bind(**NEMOTRON_NO_THINK)
     rag_chain = prompt | llm | StrOutputParser()
     generation = rag_chain.invoke({"context": documents, "question": question})
+    print(f"[Generator] ✓ Draft answer generated ({len(generation)} characters)")
     return {"documents": documents, "question": question, "generation": generation}
 
 
@@ -161,9 +178,9 @@ def grade_documents(state):
         state (dict): Filtered out irrelevant documents and updated web_search state
     """
 
-    print("---CHECK DOCUMENT RELEVANCE TO QUESTION---")
     question = state["question"]
     documents = state["documents"]
+    print(f"[Retrieval Grader] Grading {len(documents)} retrieved chunk(s) for relevance using {_model_desc(state, 'retrieval')}...")
 
     # Score each doc
     filtered_docs = []
@@ -177,24 +194,25 @@ def grade_documents(state):
                                model_name=state["nim_retrieval_id"] if len(state["nim_retrieval_id"]) > 0 else "meta/llama-3.1-8b-instruct",
                                gpu_type=state["nim_retrieval_gpu_type"] if "nim_retrieval_gpu_type" in state else None,
                                gpu_count=state["nim_retrieval_gpu_count"] if "nim_retrieval_gpu_count" in state else None,
-                               temperature=0.7) if state["retrieval_use_nim"] else ChatNVIDIA(model=state["retrieval_model_id"], temperature=0)
+                               temperature=0.7) if state["retrieval_use_nim"] else ChatNVIDIA(model=state["retrieval_model_id"], temperature=0).bind(**NEMOTRON_NO_THINK)
     retrieval_grader = prompt | llm | JsonOutputParser()
-    for d in documents:
+    for i, d in enumerate(documents):
         score = retrieval_grader.invoke(
             {"question": question, "document": d.page_content}
         )
         grade = score["score"]
         # Document relevant
         if grade.lower() == "yes":
-            print("---GRADE: DOCUMENT RELEVANT---")
+            print(f"[Retrieval Grader] Chunk {i + 1} of {len(documents)}: ✓ relevant")
             filtered_docs.append(d)
         # Document not relevant
         else:
-            print("---GRADE: DOCUMENT NOT RELEVANT---")
+            print(f"[Retrieval Grader] Chunk {i + 1} of {len(documents)}: ✗ not relevant — discarded")
             # We do not include the document in filtered_docs
             continue
     # We set a flag to indicate that we want to run web search if insufficient relevant docs found
     web_search = "Yes" if len(filtered_docs) < 1 else "No"
+    print(f"[Retrieval Grader] Kept {len(filtered_docs)} of {len(documents)} chunk(s)")
     return {"documents": filtered_docs, "question": question, "web_search": web_search}
 
 
@@ -209,9 +227,9 @@ def web_search(state):
         state (dict): Appended web results to documents
     """
 
-    print("---WEB SEARCH---")
     question = state["question"]
     documents = state.get("documents", [])
+    print(f'[Web Search] Searching the web with Tavily (top {TAVILY_K} results): "{question}"')
 
     web_search_tool = TavilySearchResults(max_results=TAVILY_K)
 
@@ -226,10 +244,12 @@ def web_search(state):
         web_results = "\n".join([d["content"] for d in docs])
         web_results = Document(page_content=web_results)
         documents.append(web_results)
+        print(f"[Web Search] ✓ Added {len(docs)} web result(s) to the context")
 
         return {"documents": documents, "question": question}
 
     except Exception as e:
+        print(f"[Web Search] ✗ Web search failed: {e}")
         raise TavilyAPIError(f"Tavily web search failed: {e}")
     # if documents is not None:
     #     documents.append(web_results)
@@ -252,9 +272,8 @@ def route_question(state):
         str: Next node to call
     """
 
-    print("---ROUTE QUESTION---")
     question = state["question"]
-    print(question)
+    print(f"[Router] Choosing a data source using {_model_desc(state, 'router')}...")
     prompt = PromptTemplate(
         template=state["prompt_router"],
         input_variables=["question"],
@@ -264,15 +283,14 @@ def route_question(state):
                                model_name=state["nim_router_id"] if len(state["nim_router_id"]) > 0 else "meta/llama-3.1-8b-instruct",
                                gpu_type=state["nim_router_gpu_type"] if "nim_router_gpu_type" in state else None,
                                gpu_count=state["nim_router_gpu_count"] if "nim_router_gpu_count" in state else None,
-                               temperature=0.7) if state["router_use_nim"] else ChatNVIDIA(model=state["router_model_id"], temperature=0)
+                               temperature=0.7) if state["router_use_nim"] else ChatNVIDIA(model=state["router_model_id"], temperature=0).bind(**NEMOTRON_NO_THINK)
     question_router = prompt | llm | JsonOutputParser()
     source = question_router.invoke({"question": question})
-    print(source)
     if source["datasource"] == "web_search":
-        print("---ROUTE QUESTION TO WEB SEARCH---")
+        print("[Router] → Question falls outside the document context — routing to web search")
         return "websearch"
     elif source["datasource"] == "vectorstore":
-        print("---ROUTE QUESTION TO RAG---")
+        print("[Router] → Question matches the document context — routing to the vector database")
         return "vectorstore"
 
 
@@ -287,7 +305,6 @@ def decide_to_generate(state):
         str: Binary decision for next node to call
     """
 
-    print("---ASSESS GRADED DOCUMENTS---")
     question = state["question"]
     web_search = state["web_search"]
     filtered_documents = state["documents"]
@@ -295,13 +312,11 @@ def decide_to_generate(state):
     if web_search == "Yes":
         # All documents have been filtered check_relevance
         # We will re-generate a new query
-        print(
-            "---DECISION: ALL DOCUMENTS ARE NOT RELEVANT TO QUESTION, INCLUDE WEB SEARCH---"
-        )
+        print("[Agent] No relevant chunks survived grading — falling back to web search")
         return "websearch"
     else:
         # We have relevant documents, so generate answer
-        print("---DECISION: GENERATE---")
+        print(f"[Agent] {len(filtered_documents)} relevant chunk(s) in hand — proceeding to answer generation")
         return "generate"
 
 
@@ -319,10 +334,10 @@ def grade_generation_v_documents_and_question(state):
         str: Decision for next node to call
     """
 
-    print("---CHECK HALLUCINATIONS---")
     question = state["question"]
     documents = state["documents"]
     generation = state["generation"]
+    print(f"[Hallucination Grader] Checking the answer is grounded in the context using {_model_desc(state, 'hallucination')}...")
 
     prompt = PromptTemplate(
         template=state["prompt_hallucination"],
@@ -333,7 +348,7 @@ def grade_generation_v_documents_and_question(state):
                                model_name=state["nim_hallucination_id"] if len(state["nim_hallucination_id"]) > 0 else "meta/llama-3.1-8b-instruct",
                                gpu_type=state["nim_hallucination_gpu_type"] if "nim_hallucination_gpu_type" in state else None,
                                gpu_count=state["nim_hallucination_gpu_count"] if "nim_hallucination_gpu_count" in state else None,
-                               temperature=0.7) if state["hallucination_use_nim"] else ChatNVIDIA(model=state["hallucination_model_id"], temperature=0)
+                               temperature=0.7) if state["hallucination_use_nim"] else ChatNVIDIA(model=state["hallucination_model_id"], temperature=0).bind(**NEMOTRON_NO_THINK)
     hallucination_grader = prompt | llm | JsonOutputParser()
 
     score = hallucination_grader.invoke(
@@ -351,21 +366,21 @@ def grade_generation_v_documents_and_question(state):
                                model_name=state["nim_answer_id"] if len(state["nim_answer_id"]) > 0 else "meta/llama-3.1-8b-instruct",
                                gpu_type=state["nim_answer_gpu_type"] if "nim_answer_gpu_type" in state else None,
                                gpu_count=state["nim_answer_gpu_count"] if "nim_answer_gpu_count" in state else None,
-                               temperature=0.7) if state["answer_use_nim"] else ChatNVIDIA(model=state["answer_model_id"], temperature=0)
+                               temperature=0.7) if state["answer_use_nim"] else ChatNVIDIA(model=state["answer_model_id"], temperature=0).bind(**NEMOTRON_NO_THINK)
     answer_grader = prompt | llm | JsonOutputParser()
     
     if grade == "yes":
-        print("---DECISION: GENERATION IS GROUNDED IN DOCUMENTS---")
+        print("[Hallucination Grader] ✓ Answer is grounded in the retrieved context")
         # Check question-answering
-        print("---GRADE GENERATION vs QUESTION---")
+        print(f"[Answer Grader] Checking the answer addresses the question using {_model_desc(state, 'answer')}...")
         score = answer_grader.invoke({"question": question, "generation": generation})
         grade = score["score"]
         if grade == "yes":
-            print("---DECISION: GENERATION ADDRESSES QUESTION---")
+            print("[Answer Grader] ✓ Answer addresses the question")
             return "useful"
         else:
-            print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
+            print("[Answer Grader] ✗ Answer does not address the question — retrying with web search")
             return "not useful"
     else:
-        print("---DECISION: GENERATION IS NOT GROUNDED IN DOCUMENTS, RE-TRY---")
+        print("[Hallucination Grader] ✗ Answer is not grounded in the context — regenerating")
         return "not supported"

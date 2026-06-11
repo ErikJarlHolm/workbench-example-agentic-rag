@@ -49,18 +49,18 @@ RECURSION_LIMIT = int(os.getenv("RECURSION_LIMIT", DEFAULT_RECURSION_LIMIT))
 
 
 # Model identifiers with prefix
-LLAMA = 'meta/llama-3.3-70b-instruct'  
-MISTRAL = "mistralai/mixtral-8x22b-instruct-v0.1"
-QWEN = "qwen/qwen3-235b-a22b"
+NANO = "nvidia/nemotron-3-nano-30b-a3b"
+SUPER = "nvidia/nemotron-3-super-120b-a12b"
+ULTRA = "nvidia/nemotron-3-ultra-550b-a55b"
 
 # check if the internal API is set
 INTERNAL_API = os.getenv('INTERNAL_API', 'no')
 
 # Modify model identifiers (to use the internal endpoints if that variable is set).
 if INTERNAL_API == 'yes':
-    LLAMA = 'nvdev/meta/llama-3.3-70b-instruct'
-    MISTRAL = 'nvdev/mistralai/mixtral-8x22b-instruct-v0.1'
-    QWEN = 'nvdev/qwen/qwen-235b'
+    NANO = 'nvdev/nvidia/nemotron-3-nano-30b-a3b'
+    SUPER = 'nvdev/nvidia/nemotron-3-super-120b-a12b'
+    ULTRA = 'nvdev/nvidia/nemotron-3-ultra-550b-a55b'
 
 # URLs for default example docs for the RAG.
 doc_links = (
@@ -131,7 +131,7 @@ EXAMPLE_LINKS_LEN = 10
 EXAMPLE_LINKS = "\n".join(doc_links)
 
 from chatui import assets, chat_client
-from chatui.prompts import prompts_llama3, prompts_mistral
+from chatui.prompts import prompts_nemotron
 from chatui.utils import compile, database, logger, gpu_compatibility
 
 from langgraph.graph import END, StateGraph
@@ -204,7 +204,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
     """ List of currently supported models. """
     
-    model_list = [LLAMA, MISTRAL, QWEN]
+    model_list = [ULTRA, SUPER, NANO]
 
     with gr.Blocks(title=TITLE, theme=kui_theme, css=kui_styles + _LOCAL_CSS) as page:
         gr.Markdown(f"# {TITLE}")
@@ -244,7 +244,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
                 # Sample questions that users can click on to use
                 with gr.Row(equal_height=True):
-                    sample_query_1 = gr.Button("How do I add an integration in the CLI?", variant="secondary", size="sm", interactive=True)
+                    sample_query_1 = gr.Button("How do I add the NGC integration using the CLI?", variant="secondary", size="sm", interactive=True)
                     sample_query_2 = gr.Button("How do I fix an inaccessible remote Location?", variant="secondary", size="sm", interactive=True)
                 
                 with gr.Row(equal_height=True):
@@ -351,7 +351,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                     with gr.TabItem("API Endpoints", id=0) as router_api:
                                         router_mode_banner = gr.Markdown(value="💻 **Using API Endpoint**", elem_classes=["mode-banner"])
                                         model_router = gr.Dropdown(model_list, 
-                                                                value=model_list[0],
+                                                                value=SUPER,
                                                                 label="Select a Model",
                                                                 elem_id="rag-inputs", 
                                                                 interactive=True)
@@ -412,7 +412,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
                                 with gr.Accordion("Configure the Router Prompt", 
                                                 elem_id="rag-inputs", open=False) as accordion_router:
-                                    prompt_router = gr.Textbox(value=prompts_llama3.router_prompt,
+                                    prompt_router = gr.Textbox(value=prompts_nemotron.router_prompt,
                                                             lines=12,
                                                             show_label=False,
                                                             interactive=True)
@@ -427,7 +427,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
                                     with gr.TabItem("API Endpoints", id=0) as retrieval_api:
                                         model_retrieval = gr.Dropdown(model_list, 
-                                                                            value=model_list[0],
+                                                                            value=SUPER,
                                                                             label="Select a Model",
                                                                             elem_id="rag-inputs", 
                                                                             interactive=True)
@@ -487,7 +487,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                 
                                 with gr.Accordion("Configure the Retrieval Grader Prompt", 
                                                 elem_id="rag-inputs", open=False) as accordion_retrieval:
-                                    prompt_retrieval = gr.Textbox(value=prompts_llama3.retrieval_prompt,
+                                    prompt_retrieval = gr.Textbox(value=prompts_nemotron.retrieval_prompt,
                                                                         lines=21,
                                                                         show_label=False,
                                                                         interactive=True)
@@ -501,7 +501,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                     generator_mode_banner = gr.Markdown(value="💻 **Using API Endpoint**", elem_classes=["mode-banner"])
                                     with gr.TabItem("API Endpoints", id=0) as generator_api:
                                         model_generator = gr.Dropdown(model_list, 
-                                                                    value=model_list[0],
+                                                                    value=SUPER,
                                                                     label="Select a Model",
                                                                     elem_id="rag-inputs", 
                                                                     interactive=True)
@@ -561,7 +561,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                 
                                 with gr.Accordion("Configure the Generator Prompt", 
                                                 elem_id="rag-inputs", open=False) as accordion_generator:
-                                    prompt_generator = gr.Textbox(value=prompts_llama3.generator_prompt,
+                                    prompt_generator = gr.Textbox(value=prompts_nemotron.generator_prompt,
                                                             lines=15,
                                                             show_label=False,
                                                             interactive=True)
@@ -575,7 +575,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                     hallucination_mode_banner = gr.Markdown(value="💻 **Using API Endpoint**", elem_classes=["mode-banner"])
                                     with gr.TabItem("API Endpoints", id=0) as hallucination_api:
                                         model_hallucination = gr.Dropdown(model_list, 
-                                                                                value=model_list[0],
+                                                                                value=SUPER,
                                                                                 label="Select a Model",
                                                                                 elem_id="rag-inputs", 
                                                                                 interactive=True)
@@ -635,7 +635,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                 
                                 with gr.Accordion("Configure the Hallucination Prompt", 
                                                 elem_id="rag-inputs", open=False) as accordion_hallucination:
-                                    prompt_hallucination = gr.Textbox(value=prompts_llama3.hallucination_prompt,
+                                    prompt_hallucination = gr.Textbox(value=prompts_nemotron.hallucination_prompt,
                                                                             lines=17,
                                                                             show_label=False,
                                                                             interactive=True)
@@ -649,7 +649,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                     answer_mode_banner = gr.Markdown(value="💻 **Using API Endpoint**", elem_classes=["mode-banner"])
                                     with gr.TabItem("API Endpoints", id=0) as answer_api:
                                         model_answer = gr.Dropdown(model_list, 
-                                                                        value=model_list[0],
+                                                                        value=SUPER,
                                                                         elem_id="rag-inputs",
                                                                         label="Select a Model",
                                                                         interactive=True)
@@ -710,7 +710,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
                                         
                                 with gr.Accordion("Configure the Answer Prompt", 
                                                 elem_id="rag-inputs", open=False) as accordion_answer:
-                                    prompt_answer = gr.Textbox(value=prompts_llama3.answer_prompt,
+                                    prompt_answer = gr.Textbox(value=prompts_nemotron.answer_prompt,
                                                                     lines=17,
                                                                     show_label=False,
                                                                     interactive=True)
@@ -953,52 +953,24 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
         #                           [nim_answer_gpu_type, nim_answer_gpu_count], 
         #                           [nim_answer_id, nim_answer_warning])
 
-        """ These helper functions track the API Endpoint selected and regenerates the prompt accordingly. """
-        
+        """ These helper functions track the API Endpoint selected and regenerate the prompt accordingly.
+        All Nemotron 3 models (Nano, Super, Ultra) share the same prompt structure, so switching models
+        resets the prompt to the same shared default. """
+
         def _toggle_model_router(selected_model: str):
-            match selected_model:
-                case str() if selected_model == LLAMA:
-                    return gr.update(value=prompts_llama3.router_prompt)
-                case str() if selected_model == MISTRAL:
-                    return gr.update(value=prompts_mistral.router_prompt)
-                case _:
-                    return gr.update(value=prompts_llama3.router_prompt)
+            return gr.update(value=prompts_nemotron.router_prompt)
         
         def _toggle_model_retrieval(selected_model: str):
-            match selected_model:
-                case str() if selected_model == LLAMA:
-                    return gr.update(value=prompts_llama3.retrieval_prompt)
-                case str() if selected_model == MISTRAL:
-                    return gr.update(value=prompts_mistral.retrieval_prompt)
-                case _:
-                    return gr.update(value=prompts_llama3.retrieval_prompt)
+            return gr.update(value=prompts_nemotron.retrieval_prompt)
 
         def _toggle_model_generator(selected_model: str):
-            match selected_model:
-                case str() if selected_model == LLAMA:
-                    return gr.update(value=prompts_llama3.generator_prompt)
-                case str() if selected_model == MISTRAL:
-                    return gr.update(value=prompts_mistral.generator_prompt)
-                case _:
-                    return gr.update(value=prompts_llama3.generator_prompt)
+            return gr.update(value=prompts_nemotron.generator_prompt)
             
         def _toggle_model_hallucination(selected_model: str):
-            match selected_model:
-                case str() if selected_model == LLAMA:
-                    return gr.update(value=prompts_llama3.hallucination_prompt)
-                case str() if selected_model == MISTRAL:
-                    return gr.update(value=prompts_mistral.hallucination_prompt)
-                case _:
-                    return gr.update(value=prompts_llama3.hallucination_prompt)
+            return gr.update(value=prompts_nemotron.hallucination_prompt)
             
         def _toggle_model_answer(selected_model: str):
-            match selected_model:
-                case str() if selected_model == LLAMA:
-                    return gr.update(value=prompts_llama3.answer_prompt)
-                case str() if selected_model == MISTRAL:
-                    return gr.update(value=prompts_mistral.answer_prompt)
-                case _:
-                    return gr.update(value=prompts_llama3.answer_prompt)
+            return gr.update(value=prompts_nemotron.answer_prompt)
 
         # Update default prompts when an API endpoint model is selected from the dropdown
         # (This applies only to the "API Endpoints" tab — not to self-hosted NIM configurations)
@@ -1499,7 +1471,9 @@ def _stream_predict(
     
     if not valid_input(question):
         yield "", chat_history + [[str(question), "*** ERR: Unable to process query. Query cannot be empty. ***"]], gr.update(show_label=False)
-    else: 
+    else:
+        print("\n[Query] ────────────────────────────────────────────")
+        print(f'[Query] Processing: "{question}"')
         try:
             actions = {}
             config = RunnableConfig(recursion_limit=RECURSION_LIMIT)
@@ -1508,12 +1482,14 @@ def _stream_predict(
                 yield "", chat_history + [[question, "Working on getting you the best answer..."]], gr.update(value=actions)
                 for key, value in output.items():
                     final_value = value
+            print("[Query] ✓ Response delivered to the chat window")
             yield "", chat_history + [[question, final_value["generation"]]], gr.update(show_label=False)
 
         except Exception as e:
             traceback.print_exc()
 
             message = _get_query_error_message(e)
+            print(f"[Query] ✗ Query failed ({type(e).__name__}) — an explanation was posted to the chat window")
 
             yield "", chat_history + [[question, message]], gr.update(show_label=False)
 
