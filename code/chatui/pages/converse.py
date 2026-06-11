@@ -244,7 +244,7 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
                 # Sample questions that users can click on to use
                 with gr.Row(equal_height=True):
-                    sample_query_1 = gr.Button("How do I add the NGC integration using the CLI?", variant="secondary", size="sm", interactive=True)
+                    sample_query_1 = gr.Button("How do I add the Github integration using OAuth?", variant="secondary", size="sm", interactive=True)
                     sample_query_2 = gr.Button("How do I fix an inaccessible remote Location?", variant="secondary", size="sm", interactive=True)
                 
                 with gr.Row(equal_height=True):
