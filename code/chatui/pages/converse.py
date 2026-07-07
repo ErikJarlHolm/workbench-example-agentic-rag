@@ -211,11 +211,11 @@ def build_page(client: chat_client.ChatClient) -> gr.Blocks:
 
         """ Keep state of which queries need to use NIMs vs API Endpoints. """
         
-        router_use_nim = gr.State(False)
-        retrieval_use_nim = gr.State(False)
-        generator_use_nim = gr.State(False)
-        hallucination_use_nim = gr.State(False)
-        answer_use_nim = gr.State(False)
+        router_use_nim = gr.State(True)
+        retrieval_use_nim = gr.State(True)
+        generator_use_nim = gr.State(True)
+        hallucination_use_nim = gr.State(True)
+        answer_use_nim = gr.State(True)
 
         """ Build the Chat Application. """
         
